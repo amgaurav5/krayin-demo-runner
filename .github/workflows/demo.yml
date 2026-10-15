@@ -10,6 +10,9 @@ on:
 jobs:
   demo:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
     timeout-minutes: 340
     steps:
       - name: Check out the Krayin integrations branch
@@ -86,6 +89,18 @@ jobs:
             echo
             echo "Up for about ${{ inputs.hours }} hour(s) from now."
           } >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" > /tmp/demo-url.txt
+
+      - name: Publish the link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          URL=$(cat /tmp/demo-url.txt)
+          gh issue create --repo "${{ github.repository }}" \
+            --title "Live demo link, started $(date -u +%H:%M) UTC, up for ${{ inputs.hours }} hour(s)" \
+            --body "Link: $URL/admin/login
+
+          Login: demo@krayin-demo.test (password shared separately). This link stops when the run ends."
 
       - name: Keep the demo up
         run: sleep $(( ${{ inputs.hours }} * 3600 ))
