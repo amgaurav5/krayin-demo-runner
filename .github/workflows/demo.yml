@@ -1,0 +1,91 @@
+name: Krayin live demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: Hours to keep the demo up (1 to 5)
+        default: '3'
+
+jobs:
+  demo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    steps:
+      - name: Check out the Krayin integrations branch
+        uses: actions/checkout@v4
+        with:
+          repository: amgaurav5/laravel-crm
+          ref: feature/viasocket-embed
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: intl, gd, pdo_mysql, zip, mbstring, bcmath, curl, xml, fileinfo, exif
+          tools: composer:v2
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader --no-progress
+
+      - name: Start MySQL
+        run: |
+          sudo systemctl start mysql.service
+          mysql -uroot -proot -e "CREATE DATABASE krayin CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+
+      - name: Install Krayin with a demo-only login
+        env:
+          VIASOCKET_ORG_ID: ${{ secrets.VIASOCKET_ORG_ID }}
+          VIASOCKET_PROJECT_ID: ${{ secrets.VIASOCKET_PROJECT_ID }}
+          VIASOCKET_EMBED_SECRET: ${{ secrets.VIASOCKET_EMBED_SECRET }}
+          DEMO_PW: ${{ secrets.DEMO_PASSWORD }}
+        run: |
+          cp .env.example .env
+          sed -i 's/^APP_ENV=.*/APP_ENV=production/; s/^APP_DEBUG=.*/APP_DEBUG=false/; s/^DB_DATABASE=.*/DB_DATABASE=krayin/; s/^DB_USERNAME=.*/DB_USERNAME=root/; s/^DB_PASSWORD=.*/DB_PASSWORD=root/' .env
+          printf 'VIASOCKET_ORG_ID=%s\nVIASOCKET_PROJECT_ID=%s\nVIASOCKET_EMBED_SECRET=%s\n' "$VIASOCKET_ORG_ID" "$VIASOCKET_PROJECT_ID" "$VIASOCKET_EMBED_SECRET" >> .env
+          php artisan key:generate --force
+          php artisan krayin-crm:install --skip-env-check --skip-admin-creation --no-interaction
+          cat > /tmp/mkadmin.php <<'PHP'
+          $cols = array_column(DB::select('describe users'), 'Field');
+          $row = ['name' => 'Demo User', 'email' => 'demo@krayin-demo.test', 'password' => password_hash(getenv('DEMO_PW'), PASSWORD_BCRYPT, ['cost' => 10]), 'role_id' => 1, 'status' => 1];
+          if (in_array('view_permission', $cols)) { $row['view_permission'] = 'global'; }
+          DB::table('users')->updateOrInsert(['id' => 1], $row);
+          File::put(storage_path('installed'), 'Krayin is successfully installed');
+          app(Webkul\Installer\Helpers\DatabaseManager::class)->markInstallationCompleted();
+          echo 'demo admin ready';
+          PHP
+          php artisan tinker --execute="$(cat /tmp/mkadmin.php)"
+
+      - name: Start the app
+        run: |
+          printf '<?php $_SERVER["HTTPS"] = "on"; $_SERVER["SERVER_PORT"] = 443;\n' > /tmp/https.php
+          PHP_CLI_SERVER_WORKERS=4 nohup php -d auto_prepend_file=/tmp/https.php -S 127.0.0.1:8000 -t public vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php > /tmp/php.log 2>&1 &
+          sleep 4
+          curl -s -o /dev/null -w "local login page: HTTP %{http_code}\n" http://127.0.0.1:8000/admin/login
+
+      - name: Open the public link
+        run: |
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8000 > /tmp/tunnel.log 2>&1 &
+          URL=""
+          for i in $(seq 1 40); do
+            URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/tunnel.log | head -1 || true)
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+          echo "DEMO URL: $URL/admin/login"
+          curl -s -o /dev/null -w "public login page: HTTP %{http_code}\n" "$URL/admin/login" || true
+          {
+            echo "## Krayin live demo"
+            echo
+            echo "**Link:** $URL/admin/login"
+            echo
+            echo "**Login:** demo@krayin-demo.test (password is in the secret DEMO_PASSWORD)"
+            echo
+            echo "Up for about ${{ inputs.hours }} hour(s) from now."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the demo up
+        run: sleep $(( ${{ inputs.hours }} * 3600 ))
