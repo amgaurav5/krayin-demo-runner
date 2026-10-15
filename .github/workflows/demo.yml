@@ -42,7 +42,7 @@ jobs:
           DEMO_PW: ${{ secrets.DEMO_PASSWORD }}
         run: |
           cp .env.example .env
-          sed -i 's/^APP_ENV=.*/APP_ENV=production/; s/^APP_DEBUG=.*/APP_DEBUG=false/; s/^DB_DATABASE=.*/DB_DATABASE=krayin/; s/^DB_USERNAME=.*/DB_USERNAME=root/; s/^DB_PASSWORD=.*/DB_PASSWORD=root/' .env
+          sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/; s/^DB_DATABASE=.*/DB_DATABASE=krayin/; s/^DB_USERNAME=.*/DB_USERNAME=root/; s/^DB_PASSWORD=.*/DB_PASSWORD=root/' .env
           printf 'VIASOCKET_ORG_ID=%s\nVIASOCKET_PROJECT_ID=%s\nVIASOCKET_EMBED_SECRET=%s\n' "$VIASOCKET_ORG_ID" "$VIASOCKET_PROJECT_ID" "$VIASOCKET_EMBED_SECRET" >> .env
           php artisan key:generate --force
           php artisan krayin-crm:install --skip-env-check --skip-admin-creation --no-interaction
